@@ -4,9 +4,15 @@ const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const session = require("express-session");
 const mongodbSession = require("connect-mongodb-session")(session);
+const jwt = require("jsonwebtoken");
 
 //file-imports
-const { userDataValidate, isEmailValidate } = require("./utils/authUtil");
+const {
+  userDataValidate,
+  isEmailValidate,
+  generateToken,
+  sendEmailVerificationMail,
+} = require("./utils/authUtil");
 const userModel = require("./models/userModel");
 const isAuth = require("./middlewares/isAuthMiddleware");
 const todoDataValidation = require("./utils/todoUtils");
@@ -88,17 +94,35 @@ app.post("/register", async (req, res) => {
 
     const userDb = await userObj.save();
 
+    //generate the token
+    const token = generateToken(email);
+
+    sendEmailVerificationMail({ token, email });
+
     return res.redirect("/login");
-    // return res.status(201).json({
-    //   message: "Register successfull",
-    //   data: userDb,
-    // });
   } catch (error) {
     console.log(error);
     return res.status(500).json({
       message: "Internal server error",
       error: error,
     });
+  }
+});
+
+app.get("/verify/:token", async (req, res) => {
+  console.log(req.params);
+
+  const token = req.params.token;
+  const email = jwt.verify(token, process.env.SECRET_KEY);
+
+  try {
+    await userModel.findOneAndUpdate(
+      { email: email },
+      { isEmailVerified: true }
+    );
+    return res.redirect("/login");
+  } catch (error) {
+    return res.status(500).json(error);
   }
 });
 
@@ -125,6 +149,11 @@ app.post("/login", async (req, res) => {
 
     if (!userDb)
       return res.status(400).json("User not found, please register first.");
+
+    //check if email is verified or not
+    if (!userDb.isEmailVerified) {
+      return res.status(400).json("Please verify your email before login");
+    }
 
     //comparing the password
     const isMatched = await bcrypt.compare(password, userDb.password);
